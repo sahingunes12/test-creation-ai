@@ -1,1 +1,23 @@
-[]
+[
+    {
+        "id": "TC-20250303-131539-3285",
+        "title": "Login functionality",
+        "area_path": "TDC-Europe",
+        "assigned_to": "G\u00fcnes",
+        "state": "Design",
+        "priority": "Critical",
+        "preconditions": "Login",
+        "steps": "1. Login\n",
+        "expected_result": "1. Should login\n",
+        "type": "Functional",
+        "module": "",
+        "complexity": 5,
+        "code_coverage": 5,
+        "business_impact": 5,
+        "failure_history": 5,
+        "risk_score": 5.0,
+        "automated": false,
+        "estimated_duration": 15,
+        "created_at": "2025-03-03 13:15"
+    }
+]

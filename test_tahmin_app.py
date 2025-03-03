@@ -15,9 +15,19 @@ import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.naive_bayes import MultinomialNB
 import random
+import sqlite3
+from sqlite3 import Error
 
 # Başlık ayarla
 st.set_page_config(page_title="Test Management AI", layout="wide")
+
+# JSON desteğini tamamen devre dışı bırak
+TEST_CASES_FILE = "test_cases.db"  # JSON file path yerine DB path kullan
+
+# Yeni bir temiz veritabanı oluşturalım, JSON dosyasını görmezden gelelim
+if os.path.exists("test_cases.db"):
+    os.remove("test_cases.db")
+    st.info("Eski veritabanı silindi, yeni temiz veritabanı oluşturulacak.")
 
 # Yardımcı fonksiyonlar - tüm sayfalar tarafından erişilebilecek şekilde
 def generate_new_id(existing_ids=None):
@@ -33,18 +43,146 @@ def generate_new_id(existing_ids=None):
     
     return new_id
 
-# Test case yükleme/kaydetme fonksiyonları
+# SQLite veritabanı işlevleri - JSON yükleme/kaydetme işlevleri yerine
+def create_connection():
+    """SQLite veritabanı bağlantısı oluştur"""
+    conn = None
+    try:
+        conn = sqlite3.connect('test_cases.db')
+        # Satırları sözlük olarak almak için
+        conn.row_factory = sqlite3.Row
+        return conn
+    except Error as e:
+        st.error(f"Veritabanı bağlantı hatası: {e}")
+    return conn
+
+def create_tables(conn):
+    """Test durumları için tabloları oluştur"""
+    try:
+        cursor = conn.cursor()
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS test_cases (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            description TEXT,
+            preconditions TEXT,
+            priority TEXT,
+            type TEXT,
+            state TEXT,
+            area_path TEXT,
+            assigned_to TEXT,
+            module TEXT,
+            automated INTEGER,
+            estimated_duration INTEGER,
+            created_at TEXT,
+            risk_score REAL,
+            complexity INTEGER,
+            code_coverage INTEGER,
+            business_impact INTEGER,
+            failure_history INTEGER,
+            steps TEXT,
+            expected_result TEXT
+        )
+        ''')
+        conn.commit()
+    except Error as e:
+        st.error(f"Tablo oluşturma hatası: {e}")
+
 def load_test_cases():
-    """Test case'leri JSON dosyasından yükler"""
-    if os.path.exists("test_cases.json"):
-        with open("test_cases.json", "r") as f:
-            return json.load(f)
+    """Tüm test durumlarını veritabanından yükle"""
+    conn = create_connection()
+    if conn is not None:
+        try:
+            create_tables(conn)  # Tablolar yoksa oluştur
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM test_cases")
+            rows = cursor.fetchall()
+            
+            test_cases = []
+            for row in rows:
+                # Row nesnesini dict'e dönüştür
+                test_case = dict(row)
+                test_cases.append(test_case)
+            
+            return test_cases
+        except Error as e:
+            st.error(f"Veri yükleme hatası: {e}")
+            # İlk çalıştırmada veya tablo yoksa boş liste döndür
+            return []
+        finally:
+            conn.close()
     return []
 
 def save_test_cases(test_cases):
-    """Test case'leri JSON dosyasına kaydeder"""
-    with open("test_cases.json", "w") as f:
-        json.dump(test_cases, f, indent=4)
+    """Test durumlarını veritabanına kaydet"""
+    conn = create_connection()
+    if conn is not None:
+        try:
+            create_tables(conn)
+            cursor = conn.cursor()
+            
+            # Önce tüm test durumlarını temizle
+            cursor.execute("DELETE FROM test_cases")
+            
+            # Verileri hazırla ve veritabanına ekle
+            for tc in test_cases:
+                try:
+                    # SQL enjeksiyon güvenliği için parametreli sorgular kullan
+                    cursor.execute('''
+                    INSERT INTO test_cases VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (
+                        tc.get('id', ''),
+                        tc.get('title', ''),
+                        tc.get('description', ''),
+                        tc.get('preconditions', ''),
+                        tc.get('priority', 'Medium'),
+                        tc.get('type', 'Functional'),
+                        tc.get('state', 'Design'),
+                        tc.get('area_path', ''),
+                        tc.get('assigned_to', ''),
+                        tc.get('module', ''),
+                        1 if tc.get('automated', False) else 0,
+                        tc.get('estimated_duration', 15),
+                        tc.get('created_at', datetime.now().strftime("%Y-%m-%d %H:%M")),
+                        tc.get('risk_score', 5.0),
+                        tc.get('complexity', 5),
+                        tc.get('code_coverage', 5),
+                        tc.get('business_impact', 5),
+                        tc.get('failure_history', 5),
+                        tc.get('steps', ''),
+                        tc.get('expected_result', '')
+                    ))
+                except Error as e:
+                    st.error(f"Test senaryosu kaydedilemedi {tc.get('id', 'UNKNOWN')}: {e}")
+            
+            conn.commit()
+            return True
+        except Error as e:
+            st.error(f"Veri kaydetme hatası: {e}")
+            return False
+        finally:
+            conn.close()
+    return False
+
+# SQLite-JSON dönüştürme fonksiyonu
+def migrate_json_to_sqlite():
+    """JSON dosyasından SQLite'a verileri aktarır (ilk geçiş için)"""
+    if os.path.exists("test_cases.json"):
+        try:
+            with open("test_cases.json", "r") as f:
+                test_cases = json.load(f)
+                
+            # SQLite'a kaydet
+            if save_test_cases(test_cases):
+                st.success("Mevcut test senaryoları SQLite veritabanına aktarıldı!")
+                # Başarılı aktarımdan sonra JSON dosyasını yedekle
+                if os.path.exists("test_cases.json.bak"):
+                    os.remove("test_cases.json.bak")
+                os.rename("test_cases.json", "test_cases.json.bak")
+                return True
+        except Exception as e:
+            st.error(f"Migrasyon hatası: {e}")
+    return False
 
 # Sidebar oluştur
 st.sidebar.title("Test Management AI")
@@ -127,7 +265,7 @@ if page == "Prediction Models":
         st.sidebar.warning(f"⚠️ {selected_model['name']} not created yet")
 
     # Modeli yeniden eğit butonu
-    if st.sidebar.button("Retrain Model", key="retrain"):
+    if st.sidebar.button("Retrain Model", key=f"retrain_{selected_model['name']}"):
         with st.sidebar:
             with st.spinner(f"Training {selected_model['name']}..."):
                 # Veri dosyası yoksa oluştur
@@ -186,6 +324,35 @@ if page == "Prediction Models":
     st.title('Test Failure Prediction Tool')
     st.markdown(f"**Active Model: {selected_model_name}**")
     st.write('Enter test metrics to predict the probability of test failure.')
+
+    # Modeli yeniden eğit butonu
+    if st.sidebar.button("Retrain Model", key=f"retrain_{selected_model['name']}"):
+        with st.sidebar:
+            with st.spinner(f"Training {selected_model['name']}..."):
+                # Veri dosyası yoksa oluştur
+                if not os.path.exists('test_verileri.csv'):
+                    st.info("Creating data file...")
+                    subprocess.run(['python', 'basit_veri_hazirlama.py'], check=True)
+                    
+                # Gerekli kütüphaneleri kontrol et ve kur
+                if 'tensorflow' in selected_model['requirements'] and selected_model['name'] == 'Derin Öğrenme Modeli':
+                    try:
+                        import tensorflow
+                    except ImportError:
+                        st.info("Installing TensorFlow, this might take a while...")
+                        subprocess.run([sys.executable, '-m', 'pip', 'install', 'tensorflow'], check=True)
+                
+                # Modeli eğit
+                st.info(f"Training {selected_model['name']}...")
+                result = subprocess.run(selected_model['script'], capture_output=True, text=True)
+                
+                if result.returncode == 0:
+                    st.success(f"{selected_model['name']} successfully trained!")
+                    selected_model['exists'] = True
+                    time.sleep(1)  # UI güncelleme için kısa bir gecikme
+                    st.experimental_rerun()  # Sayfayı yenile
+                else:
+                    st.error(f"Model training failed: {result.stderr}")
 
     # Modeli yüklemeyi dene
     try:
@@ -916,6 +1083,16 @@ elif page == "Test Case Creation":
             
             export_format = st.radio("Export Format", ["JSON", "CSV", "Excel"])
             
+            if export_format == "JSON" and st.button("Export to New JSON File"):
+                # SQLite'den yükle ve JSON olarak dışa aktar
+                exported_test_cases = load_test_cases()
+                st.download_button(
+                    label="Download JSON",
+                    data=json.dumps(exported_test_cases, indent=4),
+                    file_name="test_cases_export.json",
+                    mime="application/json"
+                )
+            
             if st.button("Export Test Cases"):
                 if export_format == "JSON":
                     st.download_button(
@@ -979,20 +1156,10 @@ elif page == "Test Case Creation":
     with tab4:
         st.header("Import/Export Test Cases")
         
-        delete_tab = st.radio("Select Operation", ["Import from CSV", "Excel to CSV Converter", "Export to File", "Delete All Test Cases"], horizontal=True)
+        # Sekme seçimi
+        import_export_tab = st.radio("Select Operation", ["Import from CSV", "Excel to CSV Converter", "Export to File", "Delete All Test Cases"], horizontal=True)
         
-        if delete_tab == "Delete All Test Cases":
-            st.subheader("Delete All Test Cases")
-            st.warning("⚠️ This will permanently delete ALL test cases. This action cannot be undone!")
-            
-            if st.button("Delete All Test Cases", key="delete_all_confirm"):
-                # Boş bir liste oluştur ve kaydet
-                save_test_cases([])
-                # test_cases.json dosyası boş bir dizi içerecek
-                st.success("All test cases have been deleted!")
-                st.info("The test case database has been reset.")
-        
-        elif delete_tab == "Import from CSV":
+        if import_export_tab == "Import from CSV":
             st.subheader("Import Test Cases from CSV")
             
             st.info("""
@@ -1148,7 +1315,7 @@ elif page == "Test Case Creation":
                     st.error(f"Error importing CSV: {str(e)}")
                     st.info("Please make sure your CSV file is correctly formatted.")
         
-        elif delete_tab == "Excel to CSV Converter":
+        elif import_export_tab == "Excel to CSV Converter":
             st.subheader("Excel to Test Case CSV Converter")
             
             st.info("""
@@ -1397,6 +1564,25 @@ elif page == "Test Case Creation":
                     st.error(f"Error processing Excel file: {str(e)}")
                     st.info("Please make sure your Excel file is properly formatted.")
         
+        elif import_export_tab == "Delete All Test Cases":
+            st.subheader("Delete All Test Cases")
+            st.warning("⚠️ Bu işlem TÜM test senaryolarını kalıcı olarak silecektir. Bu işlem geri alınamaz!")
+            
+            if st.button("Delete All Test Cases", key="delete_all_confirm"):
+                # SQLite veritabanını tamamen boşalt
+                conn = create_connection()
+                if conn is not None:
+                    try:
+                        cursor = conn.cursor()
+                        cursor.execute("DELETE FROM test_cases")
+                        conn.commit()
+                        st.success("Tüm test senaryoları başarıyla silindi!")
+                        st.info("Test senaryosu veritabanı sıfırlandı.")
+                    except Error as e:
+                        st.error(f"Silme hatası: {e}")
+                    finally:
+                        conn.close()
+        
         else:  # Export to File
             # Mevcut dışa aktarma kodunu buraya taşıyın
             st.subheader("Export Test Cases")
@@ -1409,16 +1595,40 @@ elif page == "Test Case Creation":
             else:
                 export_format = st.radio("Export Format", ["JSON", "CSV", "Excel"])
                 
-                if st.button("Export Test Cases"):
-                    if export_format == "JSON":
-                        st.download_button(
-                            label="Download JSON",
-                            data=json.dumps(test_cases, indent=4),
-                            file_name="test_cases_export.json",
-                            mime="application/json"
-                        )
-                    elif export_format == "CSV":
-                        # Flatten test cases for CSV
+                if export_format == "JSON" and st.button("Export to New JSON File"):
+                    # SQLite'den yükle ve JSON olarak dışa aktar
+                    exported_test_cases = load_test_cases()
+                    st.download_button(
+                        label="Download JSON",
+                        data=json.dumps(exported_test_cases, indent=4),
+                        file_name="test_cases_export.json",
+                        mime="application/json"
+                    )
+                elif export_format == "CSV":
+                    # Flatten test cases for CSV
+                    flat_cases = []
+                    for tc in test_cases:
+                        flat_tc = tc.copy()
+                        if 'steps' in flat_tc:
+                            flat_tc['steps'] = flat_tc['steps'].replace('\n', ' ')
+                        if 'expected_result' in flat_tc:
+                            flat_tc['expected_result'] = flat_tc['expected_result'].replace('\n', ' ')
+                        if 'preconditions' in flat_tc:
+                            flat_tc['preconditions'] = flat_tc['preconditions'].replace('\n', ' ')
+                        flat_cases.append(flat_tc)
+                    
+                    csv_df = pd.DataFrame(flat_cases)
+                    csv = csv_df.to_csv(index=False)
+                    st.download_button(
+                        label="Download CSV",
+                        data=csv,
+                        file_name="test_cases_export.csv",
+                        mime="text/csv"
+                    )
+                else:  # Excel
+                    try:
+                        import openpyxl
+                        # Flatten test cases for Excel
                         flat_cases = []
                         for tc in test_cases:
                             flat_tc = tc.copy()
@@ -1430,42 +1640,19 @@ elif page == "Test Case Creation":
                                 flat_tc['preconditions'] = flat_tc['preconditions'].replace('\n', ' ')
                             flat_cases.append(flat_tc)
                         
-                        csv_df = pd.DataFrame(flat_cases)
-                        csv = csv_df.to_csv(index=False)
+                        excel_df = pd.DataFrame(flat_cases)
+                        excel_buffer = io.BytesIO()
+                        with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+                            excel_df.to_excel(writer, index=False)
+                        
+                        excel_data = excel_buffer.getvalue()
                         st.download_button(
-                            label="Download CSV",
-                            data=csv,
-                            file_name="test_cases_export.csv",
-                            mime="text/csv"
+                            label="Download Excel",
+                            data=excel_data,
+                            file_name="test_cases_export.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                         )
-                    else:  # Excel
-                        try:
-                            import openpyxl
-                            # Flatten test cases for Excel
-                            flat_cases = []
-                            for tc in test_cases:
-                                flat_tc = tc.copy()
-                                if 'steps' in flat_tc:
-                                    flat_tc['steps'] = flat_tc['steps'].replace('\n', ' ')
-                                if 'expected_result' in flat_tc:
-                                    flat_tc['expected_result'] = flat_tc['expected_result'].replace('\n', ' ')
-                                if 'preconditions' in flat_tc:
-                                    flat_tc['preconditions'] = flat_tc['preconditions'].replace('\n', ' ')
-                                flat_cases.append(flat_tc)
-                            
-                            excel_df = pd.DataFrame(flat_cases)
-                            excel_buffer = io.BytesIO()
-                            with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
-                                excel_df.to_excel(writer, index=False)
-                            
-                            excel_data = excel_buffer.getvalue()
-                            st.download_button(
-                                label="Download Excel",
-                                data=excel_data,
-                                file_name="test_cases_export.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                            )
-                        except ImportError:
-                            st.error("Excel export requires openpyxl. Please install it with: pip install openpyxl")
-                        except Exception as e:
-                            st.error(f"Excel export failed: {e}") 
+                    except ImportError:
+                        st.error("Excel export requires openpyxl. Please install it with: pip install openpyxl")
+                    except Exception as e:
+                        st.error(f"Excel export failed: {e}") 
