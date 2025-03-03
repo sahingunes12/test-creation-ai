@@ -264,34 +264,34 @@ if page == "Prediction Models":
     else:
         st.sidebar.warning(f"⚠️ {selected_model['name']} not created yet")
 
-    # Modeli yeniden eğit butonu
-    if st.sidebar.button("Retrain Model", key=f"retrain_{selected_model['name']}"):
-        with st.sidebar:
-            with st.spinner(f"Training {selected_model['name']}..."):
-                # Veri dosyası yoksa oluştur
-                if not os.path.exists('test_verileri.csv'):
-                    st.info("Creating data file...")
-                    subprocess.run(['python', 'basit_veri_hazirlama.py'], check=True)
-                    
-                # Gerekli kütüphaneleri kontrol et ve kur
-                if 'tensorflow' in selected_model['requirements'] and selected_model['name'] == 'Derin Öğrenme Modeli':
-                    try:
-                        import tensorflow
-                    except ImportError:
-                        st.info("Installing TensorFlow, this might take a while...")
-                        subprocess.run([sys.executable, '-m', 'pip', 'install', 'tensorflow'], check=True)
-                
-                # Modeli eğit
-                st.info(f"Training {selected_model['name']}...")
-                result = subprocess.run(selected_model['script'], capture_output=True, text=True)
-                
-                if result.returncode == 0:
-                    st.success(f"{selected_model['name']} successfully trained!")
-                    selected_model['exists'] = True
-                    time.sleep(1)  # UI güncelleme için kısa bir gecikme
-                    st.experimental_rerun()  # Sayfayı yenile
-                else:
-                    st.error(f"Model training failed: {result.stderr}")
+    # Modeli eğitme fonksiyonunu tanımla
+    def train_model(model_info):
+        """Seçilen modeli eğitme fonksiyonu"""
+        with st.spinner(f"{model_info['name']} modeli eğitiliyor..."):
+            # Veri dosyası yoksa oluştur
+            if not os.path.exists('test_verileri.csv'):
+                st.info("Veri dosyası oluşturuluyor...")
+                subprocess.run(['python', 'basit_veri_hazirlama.py'], check=True)
+            
+            # Gerekli kütüphaneleri kontrol et ve kur
+            if 'tensorflow' in model_info['requirements'] and model_info['name'] == 'Derin Öğrenme Modeli':
+                try:
+                    import tensorflow
+                except ImportError:
+                    st.info("TensorFlow kuruluyor, bu biraz zaman alabilir...")
+                    subprocess.run([sys.executable, '-m', 'pip', 'install', 'tensorflow'], check=True)
+            
+            # Modeli eğit
+            st.info(f"{model_info['name']} eğitiliyor...")
+            result = subprocess.run(model_info['script'], capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                st.success(f"{model_info['name']} başarıyla eğitildi!")
+                model_info['exists'] = True
+                time.sleep(1)  # UI güncelleme için kısa bir gecikme
+                st.experimental_rerun()  # Sayfayı yenile
+            else:
+                st.error(f"Model eğitimi başarısız oldu: {result.stderr}")
 
     # Modeli yükle fonksiyonu
     @st.cache_resource
@@ -325,34 +325,9 @@ if page == "Prediction Models":
     st.markdown(f"**Active Model: {selected_model_name}**")
     st.write('Enter test metrics to predict the probability of test failure.')
 
-    # Modeli yeniden eğit butonu
-    if st.sidebar.button("Retrain Model", key=f"retrain_{selected_model['name']}"):
-        with st.sidebar:
-            with st.spinner(f"Training {selected_model['name']}..."):
-                # Veri dosyası yoksa oluştur
-                if not os.path.exists('test_verileri.csv'):
-                    st.info("Creating data file...")
-                    subprocess.run(['python', 'basit_veri_hazirlama.py'], check=True)
-                    
-                # Gerekli kütüphaneleri kontrol et ve kur
-                if 'tensorflow' in selected_model['requirements'] and selected_model['name'] == 'Derin Öğrenme Modeli':
-                    try:
-                        import tensorflow
-                    except ImportError:
-                        st.info("Installing TensorFlow, this might take a while...")
-                        subprocess.run([sys.executable, '-m', 'pip', 'install', 'tensorflow'], check=True)
-                
-                # Modeli eğit
-                st.info(f"Training {selected_model['name']}...")
-                result = subprocess.run(selected_model['script'], capture_output=True, text=True)
-                
-                if result.returncode == 0:
-                    st.success(f"{selected_model['name']} successfully trained!")
-                    selected_model['exists'] = True
-                    time.sleep(1)  # UI güncelleme için kısa bir gecikme
-                    st.experimental_rerun()  # Sayfayı yenile
-                else:
-                    st.error(f"Model training failed: {result.stderr}")
+    # Modeli yeniden eğit butonu - sadece tek bir yerde kullanın
+    if st.sidebar.button("Retrain Model", key=f"retrain_model_{selected_model['name']}"):
+        train_model(selected_model)
 
     # Modeli yüklemeyi dene
     try:
